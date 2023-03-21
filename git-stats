@@ -1,0 +1,939 @@
+#!/usr/bin/env bash
+set -o nounset
+set -o errexit
+
+DEFAULT_GIT_LIMIT=$(git log | grep -E "^commit " | wc -l)
+
+_since=${_GIT_SINCE:-}
+if [[ -n "${_since}" ]]; then
+    _since="--since=$_since"
+else
+    _since="--since=$(git log --date=iso --reverse --format='%ad' | head -n1 | cut -d' ' -f -2)"
+fi
+_since="--since=$(date --date="$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+
+_until=${_GIT_UNTIL:-}
+if [[ -n "${_until}" ]]; then
+    _until="--until=$_until"
+else
+    _until="--until=$(date +'%Y-%m-%d %H:%M:%S')"
+fi
+_until="--until=$(date --date="$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+
+_pathspec=${_GIT_PATHSPEC:-}
+if [[ -n "${_pathspec}" ]]; then
+    _pathspec="-- $_pathspec"
+else
+    _pathspec="--"
+fi
+
+_merges=${_GIT_MERGE_VIEW:-}
+_merges=$(echo "$_merges" | awk '{print tolower($0)}')
+if [[ "${_merges}" == "exclusive" ]]; then
+    _merges="--merges"
+elif [[ "${_merges}" == "enable" ]]; then
+    _merges=""
+else
+    _merges="--no-merges"
+fi
+
+_limit=${_GIT_LIMIT:-}
+if [[ -n "${_limit}" ]]; then
+    _limit=$_limit
+else
+    _limit=${DEFAULT_GIT_LIMIT}
+fi
+
+_log_options=${_GIT_LOG_OPTIONS:-}
+if [[ -n "${_log_options}" ]]; then
+    _log_options=$_log_options
+else
+    _log_options=""
+fi
+
+_branch=${_GIT_BRANCH:-}
+if [[ -n "${_branch}" ]]; then
+  if [[ $(git show-ref refs/heads/"${_branch}") ]] ; then
+    _branch=$_branch
+  else
+      optionPicked "Branch ${_branch} does not exist."
+      _branch=$(git rev-parse --abbrev-ref HEAD)
+  fi
+else
+    _branch=$(git rev-parse --abbrev-ref HEAD)
+fi
+
+_author=${_GIT_AUTHOR:-}
+if [[ -n "${_author}" ]]; then
+    _author="--author=${_author}"
+else
+    _author="--author=**"
+fi
+
+_output_dir=${_GIT_OUTPUT_DIR:-}
+if [[ -n "${_output_dir}" ]]; then
+    _output_dir="$(realpath ${_output_dir})"
+else
+    _output_dir="$(dirname $(realpath ${0}))/output"
+fi
+
+_theme="${_MENU_THEME:=default}"
+
+function checkUtils() {
+  readonly MSG="not found. Please make sure this is installed and in PATH."
+  readonly UTILS="awk basename cat column echo git grep head printf seq sort \
+                  tput tr uniq"
+  for u in $UTILS
+  do
+    command -v "$u" >/dev/null 2>&1 || { echo >&2 "$u ${MSG}"; exit 1; }
+  done
+}
+
+function optionPicked() {
+  local msg=${*:-"Error: No message passed"}
+  echo -e "${msg}\n"
+}
+
+function usage() {
+  readonly PROGRAM=$(basename "$0")
+  echo "
+NAME
+    ${PROGRAM} - Simple and efficient way to access various stats in a git repo
+
+SYNOPSIS
+    For non-interactive mode: ${PROGRAM} [OPTIONS]
+    For interactive mode: ${PROGRAM}
+
+DESCRIPTION
+    Any git repository contains tons of information about commits, contributors,
+    and files. Extracting this information is not always trivial, mostly because
+    of a gadzillion options to a gadzillion git commands.
+
+    This program allows you to see detailed information about a git repository.
+
+GENERATE OPTIONS
+    -T, --detailed-git-stats
+        give a detailed list of git stats
+    -c, --changelogs
+        see changelogs
+    -V, --csv-output
+        output daily stats in CSV format
+    -j, --json-output
+        save git log as a JSON formatted file to a specified area
+
+LIST OPTIONS
+    -b, --branch-tree
+        show an ASCII graph of the git repo branch history
+    -D, --branches-by-date
+        show branches by date
+    -C, --contributors
+        see a list of everyone who contributed to the repo
+    -a, --commits-per-author
+        displays a list of commits per author
+    -d, --commits-per-day
+        displays a list of commits per day
+    -m, --commits-by-month
+        displays a list of commits per month
+    -Y, --commits-by-year
+        displays a list of commits per year
+    -w, --commits-by-weekday
+        displays a list of commits per weekday
+    -o, --commits-by-hour
+        displays a list of commits per hour
+    -z, --commits-by-timezone
+        displays a list of commits per timezone
+
+SUGGEST OPTIONS
+    -r, --suggest-reviewers
+        show the best people to contact to review code
+    -h, -?, --help
+        display this help text in the terminal
+
+ADDITIONAL USAGE
+    You can set _GIT_SINCE and _GIT_UNTIL to limit the git time log
+        ex: export _GIT_SINCE=\"2020-03-20\"
+    You can set _GIT_LIMIT for limited output log
+        ex: export _GIT_LIMIT=20
+    You can set _GIT_LOG_OPTIONS for git log options
+        ex: export _GIT_LOG_OPTIONS=\"--ignore-all-space --ignore-blank-lines\"
+    You can exclude directories or files from the stats by using pathspec
+        ex: export _GIT_PATHSPEC=':!pattern'
+    You can set _GIT_MERGE_VIEW to view merge commits with normal commits
+        ex: export _GIT_MERGE_VIEW=enable
+    You can also set _GIT_MERGE_VIEW to only show merge commits
+        ex: export _GIT_MERGE_VIEW=exclusive
+    You can set _GIT_BRANCH to set the branch of the stats
+        ex: export _GIT_BRANCH=master
+    You can set _GIT_AUTHOR to set the author of the stats
+        ex: export _GIT_AUTHOR=\"username\"
+    You can set _GIT_OUTPUT_DIR to set the output directory of the stats
+        ex: export _GIT_OUTPUT_DIR=/path/to/output
+    You can set _MENU_THEME to display the legacy color scheme
+        ex: export _MENU_THEME=legacy"
+}
+
+function setOptions(){
+  unset _GIT_SINCE
+  unset _GIT_UNTIL
+  unset _GIT_LIMIT
+  unset _GIT_LOG_OPTIONS
+  unset _GIT_PATHSPEC
+  unset _GIT_MERGE_VIEW
+  unset _GIT_BRANCH
+  unset _GIT_AUTHOR
+  unset _GIT_OUTPUT_DIR
+  unset _MENU_THEME
+  read -r -p "Since: " __since
+  [[ -z ${__since} ]] || export _GIT_SINCE=${__since}
+  read -r -p "Until: " __until
+  [[ -z ${__until} ]] || export _GIT_UNTIL=${__until}
+  read -r -p "Merge view: " __merges
+  [[ -z ${__merges} ]] || export _GIT_MERGE_VIEW=${__merges}
+  read -r -p "Branch: " __branch
+  [[ -z ${__branch} ]] || export _GIT_BRANCH=${__branch}
+  read -r -p "Author: " __author
+  [[ -z ${__author} ]] || export _GIT_AUTHOR=${__author}
+  read -r -p "Output directory: " __output_dir
+  [[ -z ${__output_dir} ]] || export _GIT_OUTPUT_DIR=${__output_dir}
+  exec "$0"
+}
+
+function showOptions(){
+  printf %b "\\n${TITLES} Current option values:${NORMAL}\\n\\n"
+  printf %b "${NUMS}    Since:\\t${TEXT} $(echo $_since | cut -d= -f2)\\n"
+  printf %b "${NUMS}    Until:\\t${TEXT} $(echo $_until | cut -d= -f2)\\n"
+  printf %b "${NUMS}    Merge view:\\t${TEXT} $_merges\\n"
+  printf %b "${NUMS}    Branch:\\t${TEXT} $_branch\\n"
+  printf %b "${NUMS}    Author:\\t${TEXT} $(echo $_author | cut -d= -f2 | tr -d "\*")\\n"
+  printf %b "${NUMS}    Output:\\t${TEXT} $_output_dir\\n"
+}
+
+function setTheme(){
+  NORMAL=$(tput sgr0)
+  CYAN=$(tput setaf 6)
+  BOLD=$(tput bold)
+  RED=$(tput setaf 1)
+  YELLOW=$(tput setaf 3)
+  WHITE=$(tput setaf 7)
+  TITLES=""
+  TEXT=""
+  NUMS=""
+  HELP_TXT=""
+  EXIT_TXT=""
+  if [[ "${_theme}" == "legacy" ]]; then
+    TITLES="${BOLD}${RED}"
+    TEXT="${NORMAL}${CYAN}"
+    NUMS="${BOLD}${YELLOW}"
+    HELP_TXT="${NORMAL}${YELLOW}"
+    EXIT_TXT="${BOLD}${RED}"
+  else
+    TITLES="${BOLD}${CYAN}"
+    TEXT="${NORMAL}${WHITE}"
+    NUMS="${NORMAL}${BOLD}${WHITE}"
+    HELP_TXT="${NORMAL}${CYAN}"
+    EXIT_TXT="${BOLD}${CYAN}"
+  fi
+}
+
+function showMenu() {
+  setTheme
+  if [[ "$#" -eq 1 ]];then
+    showOptions
+  fi
+  printf %b "\\n${TITLES} Generate:${NORMAL}\\n\\n"
+  printf %b "${NUMS}    1)${TEXT} Contribution stats (by author)\\n"
+  printf %b "${NUMS}    2)${TEXT} Git changelogs\\n"
+  printf %b "${NUMS}    3)${TEXT} Guides changelogs\\n"
+  printf %b "${NUMS}    4)${TEXT} Output daily stats in CSV format\\n"
+  printf %b "${NUMS}    5)${TEXT} Save git log output in JSON format\\n"
+  printf %b "\\n${TITLES} List:\\n\\n"
+  printf %b "${NUMS}    6)${TEXT} Branch tree view\\n"
+  printf %b "${NUMS}    7)${TEXT} All branches (sorted by most recent commit)\\n"
+  printf %b "${NUMS}    8)${TEXT} All contributors (sorted by name)\\n"
+  printf %b "${NUMS}    9)${TEXT} Git commits per author\\n"
+  printf %b "${NUMS}   10)${TEXT} Git commits per date\\n"
+  printf %b "${NUMS}   11)${TEXT} Git commits per month\\n"
+  printf %b "${NUMS}   12)${TEXT} Git commits per year\\n"
+  printf %b "${NUMS}   13)${TEXT} Git commits per weekday\\n"
+  printf %b "${NUMS}   14)${TEXT} Git commits per hour\\n"
+  printf %b "${NUMS}   15)${TEXT} Git commits per timezone\\n"
+  printf %b "\\n${TITLES} Suggest:\\n\\n"
+  printf %b "${NUMS}   16)${TEXT} Code reviewers (based on git history)\\n"
+  printf %b "\\n${TITLES} Options:\\n\\n"
+  printf %b "${NUMS}   17)${TEXT} Set options\\n"
+  printf %b "${NUMS}   18)${TEXT} Show options\\n"
+  printf %b "\\n${HELP_TXT}Please enter a menu option or ${EXIT_TXT}press ${BOLD}${YELLOW}Enter${EXIT_TXT} to exit.\\n"
+  printf %b "${TEXT}> ${NORMAL}"
+  read -r opt
+}
+
+function detailedGitStats() {
+  local output=""
+  optionPicked "Contribution stats (by author) on ${_branch} branch:"
+  output=$(echo "Contribution-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+  optionPicked "This may take a while..."
+  git -c log.showSignature=false log ${_branch} --use-mailmap $_merges --numstat \
+      --pretty="format:commit %H%nAuthor: %aN <%aE>%nDate:   %ad%n%n%w(0,4,4)%B%n" \
+      "${_author}" "$_since" "$_until" $_log_options $_pathspec | LC_ALL=C awk '
+      function printStats(author) {
+      printf "%s:\n", author
+
+      if(more["total"] > 0) {
+          printf "  insertions:    %d\t(%.0f%%)\n", more[author], \
+              (more[author] / more["total"] * 100)
+      }
+
+      if(less["total"] > 0) {
+          printf "  deletions:     %d\t(%.0f%%)\n", less[author], \
+              (less[author] / less["total"] * 100)
+      }
+
+      if(file["total"] > 0) {
+          printf "  files:         %d\t(%.0f%%)\n", file[author], \
+              (file[author] / file["total"] * 100)
+      }
+
+      if(commits["total"] > 0) {
+          printf "  commits:       %d\t(%.0f%%)\n", commits[author], \
+              (commits[author] / commits["total"] * 100)
+      }
+
+      if (first[author] != "") {
+          if ( ((more["total"] + less["total"]) * 100) > 0) {
+              printf "  lines changed: %d\t", more[author] + less[author]
+              printf "(%.0f%%)\n", ((more[author] + less[author]) / \
+                                    (more["total"] + less["total"]) * 100)
+          }
+          else {
+              printf "  lines changed: %d\t(0%%)\n", (more[author] + less[author])
+          }
+          printf "  first commit:  %s\n", first[author]
+          printf "  last commit:   %s\n", last[author]
+      }
+
+      printf "\n"
+      }
+
+      /^Author:/ {
+      $1 = ""
+      author = $0
+      commits[author] += 1
+      commits["total"] += 1
+      }
+
+      /^Date:/ {
+      $1="";
+      first[author] = substr($0, 2)
+      if(last[author] == "" ) { last[author] = first[author] }
+      }
+
+      /^[0-9]/ {
+      more[author] += $1
+      less[author] += $2
+
+      file[author] += 1
+      more["total"]  += $1
+      less["total"]  += $2
+      file["total"]  += 1
+      }
+
+      END {
+      for (author in commits) {
+          if (author != "total") {
+          printStats(author)
+          }
+      }
+      printStats("total")
+    }' > "${_output_dir}/$output"
+    cat "${_output_dir}/$output"
+}
+
+function changelogs() {
+  local output=""
+  local next=$(date +%F)
+  local merges
+  case "${_merges}" in
+    --no-merges) merges="commits";;
+    --merges) merges="merges";;
+    *) merges="merges and commits";;
+  esac
+  if [[ "${_author}" == "--author=**" ]]; then
+    optionPicked "Git ${merges} changelogs:"
+  else
+    optionPicked "Git ${merges} changelogs for author '$(echo ${_author} | cut -d= -f2)':"
+  fi
+  output=$(echo "Git-${merges}-changelogs_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+  optionPicked "This may take a while..."
+  git -c log.showSignature=false log \
+      ${_branch} \
+      --use-mailmap \
+      $_merges \
+      --format="%cd" \
+      --date=short "${_author}" "$_since" "$_until" $_log_options $_pathspec \
+      | sort -u -r | head -n $_limit \
+      | while read DATE; do
+          echo -e "\n;\n[$DATE]\n;"
+          GIT_PAGER=cat git -c log.showSignature=false log \
+                            --use-mailmap  ${_branch} $_merges \
+                            --format=" * %aN;%s" "${_author}" \
+                            --since="$DATE 00:00:00" --until="$next 23:59:59" \
+                            | sort -u
+          next=$DATE
+        done | column -t -s\; > "${_output_dir}/$output"
+        cat "${_output_dir}/$output"
+}
+
+function guidesChangelogs(){
+  local output=""
+  local next=$(date +%F)
+  local title=''
+  if [[ "${_merges}" == "--merges" ]];then
+    if [[ "${_author}" == "--author=**" ]]; then
+      optionPicked "Guides merges changelogs:"
+    else
+      optionPicked "Guides merges changelogs for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    output=$(echo "Guides-merges-changelogs_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+    optionPicked "This may take a while..."
+    git -c log.showSignature=false log \
+         ${_branch} \
+        --merges \
+        --format="%cd" \
+        --date=short \
+        "${_since}" \
+        "${_until}" \
+        "${_author}" \
+        | sort -u -r \
+        | while read DATE;
+        do
+          echo -e "\n:\n[$DATE]\n:";
+          GIT_PAGER=cat git -c log.showSignature=false log \
+                             ${_branch} \
+                            --merges \
+                            --format="%p (%aN)" \
+                            --since="$DATE 00:00:00" \
+                            --until="$next 23:59:59" \
+                            "${_author}" \
+                            | while read hash parent author;
+                            do
+                              dirname $(git -c log.showSignature=false log \
+                                  --name-only \
+                                  --pretty="format:" \
+                                  --since="$DATE 00:00:00" \
+                                  --until="$next 23:59:59" ${parent}) 2>/dev/null | sort -u | while read g; \
+                                  do
+                                    if [[ -f $g/guide.en-gb.md ]];then
+                                      title=$(awk -F ": " '/^title: / {print $2}' $g/guide.en-gb.md);
+                                    elif [[ -f $g/guide.fr-fr.md ]];then
+                                      title=$(awk -F ": " '/^title: / {print $2}' $g/guide.fr-fr.md);
+                                    fi;
+                                    gd=$(git log --date=iso --reverse -- ${g}/ | awk '/^Date: / {print $2}' | head -n1 | tr -d "-")
+                                    if [[ $gd -lt $(echo ${_since} | grep -Eo "[0-9]{4}(-[0-9]{2}){2}" | tr -d "-") ]];then
+                                      isNew=""
+                                    else
+                                      isNew=" — New"
+                                    fi
+                                    title=$(echo $title | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//");
+                                    if [[ -n $title ]];then
+                                      author=$(echo "${author}" | tr -d ")(");
+                                      echo " * ${author}:${title}${isNew}";
+                                    fi;
+                                  done | sort -u;
+                            done | sort -u;
+                            next=$DATE;
+                          done | column -t -s: > "${_output_dir}/$output"
+  elif [[ "${_merges}" == "--no-merges" ]];then
+    if [[ "${_author}" == "--author=**" ]]; then
+      optionPicked "Guides commits changelogs:"
+    else
+      optionPicked "Guides commits changelogs for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    output=$(echo "Guides-commits-changelogs_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+    optionPicked "This may take a while..."
+    git -c log.showSignature=false log \
+         ${_branch} \
+        --no-merges \
+        --format="%cd" \
+        --date=short \
+        "${_since}" \
+        "${_until}" \
+        "${_author}" \
+      | sort -u -r \
+      | while read DATE;
+          do
+            echo -e "\n:\n[$DATE]\n:";
+            GIT_PAGER=cat git -c log.showSignature=false log \
+                             ${_branch} \
+                            --no-merges \
+                            --format="%h (%aN)" \
+                            --since="$DATE 00:00:00" \
+                            --until="$next 23:59:59" \
+                            "${_author}" \
+                        | while read ha;
+                        do
+                          hash=$(echo $ha | cut -d' ' -f1);
+                          author=$(echo $ha | awk -F "[()]" '{print $2}');
+                          dirname $(git diff-tree --name-only --no-commit-id -r -c ${hash}) 2>/dev/null | sort -u \
+                          | while read g;
+                          do
+                            if [[ -f $g/guide.en-gb.md ]];then
+                              title=$(awk -F ": " '/^title: / {print $2}' $g/guide.en-gb.md);
+                            elif [[ -f $g/guide.fr-fr.md ]];then
+                              title=$(awk -F ": " '/^title: / {print $2}' $g/guide.fr-fr.md);
+                            fi;
+                            gd=$(git log --date=iso --reverse -- ${g}/ | awk '/^Date: / {print $2}' | head -n1 | tr -d "-")
+                            if [[ $gd -lt $(echo ${_since} | grep -Eo "[0-9]{4}(-[0-9]{2}){2}" | tr -d "-") ]];then
+                              isNew=""
+                            else
+                              isNew=" — New"
+                            fi
+                            title=$(echo $title | sed 's/^"//;s/"$//' | sed "s/^'//;s/'$//");
+                            if [[ -n $title ]];then
+                              echo " * ${author}:${title}${isNew}";
+                            fi;
+                          done;
+                        done | sort -u;
+                        next=$DATE;
+                      done | column -t -s: > "${_output_dir}/$output"
+  fi
+  cat "${_output_dir}/$output" | sed "s/ — New/${YELLOW}  — New${NORMAL}/g"
+}
+
+function csvOutput() {
+    output=$(echo "CSV-daily-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').csv" | tr " :" "-" | tr -s "_-")
+    printf "author,insertions,insertions_per,deletions,deletions_per,files," > "${_output_dir}/$output"
+    printf "files_per,commits,commits_per,lines_changed,lines_changed_per\n" >> "${_output_dir}/$output"
+    git -c log.showSignature=false log ${_branch} --use-mailmap $_merges --numstat \
+        --pretty="format:commit %H%nAuthor: %aN <%aE>%nDate:   %ad%n%n%w(0,4,4)%B%n" \
+        "${_author}" "$_since" "$_until" $_log_options $_pathspec | LC_ALL=C awk '
+        function printStats(author) {
+        printf "%s,", author
+        if(more["total"] > 0) {
+            printf "%d,%.0f%%,", more[author], \
+                (more[author] / more["total"] * 100)
+        }
+
+        if(less["total"] > 0) {
+            printf "%d,%.0f%%,", less[author], \
+                (less[author] / less["total"] * 100)
+        }
+
+        if(file["total"] > 0) {
+            printf "%d,%.0f%%,", file[author], \
+                (file[author] / file["total"] * 100)
+        }
+
+        if(commits["total"] > 0) {
+            printf "%d,%.0f%%,", commits[author], \
+                (commits[author] / commits["total"] * 100)
+        }
+
+        if (first[author] != "") {
+            if ( ((more["total"] + less["total"]) * 100) > 0) {
+                printf "%d,", more[author] + less[author]
+                printf "%.0f%%\n", ((more[author] + less[author]) / \
+                                      (more["total"] + less["total"]) * 100)
+            }
+        }
+        }
+
+        /^Author:/ {
+        $1 = ""
+        author = $0
+        commits[author] += 1
+        commits["total"] += 1
+        }
+
+        /^Date:/ {
+        $1="";
+        first[author] = substr($0, 2)
+        if(last[author] == "" ) { last[author] = first[author] }
+        }
+
+        /^[0-9]/ {
+        more[author] += $1
+        less[author] += $2
+
+        file[author] += 1
+        more["total"]  += $1
+        less["total"]  += $2
+        file["total"]  += 1
+        }
+
+        END {
+        for (author in commits) {
+            if (author != "total") {
+            printStats(author)
+            }
+        }
+
+      }' >> "${_output_dir}/$output"
+      cat "${_output_dir}/$output"
+}
+
+function toJsonProp() {
+    local propTag="${1:-__JSONPROP__}"
+    sed -n -E '
+# transforms the special sequence.
+/^'"$propTag"'[^\r]/ {
+    # remove the special prefix, keep the property name followed by :
+    s/^'"$propTag"'([^\r]+)\r?$/\1:/g;
+    # hold in buffer, get the next line.
+    h;n
+    # loop
+    b eos
+    :eos {
+        # add in hold buffer and loop while the string is not finished.
+        /^'"$propTag"',?\r?$/ ! { H; n; b eos; }
+        # end of the string, flip buffer to current pattern.
+		# keeps the comma if any, or a space as an empty placeholder.
+		/,\r?$/ ! { x; s/\r?$/ / }
+		/,\r?$/   { x; s/\r?$/,/ }
+    }
+    # replace special JSON string chars.
+    s/["\\]/\\&/g;
+    # replace control chars, carriage returns, line feeds, tabulations, etc.
+    s/\x00/\\u0000/g; s/\x01/\\u0001/g; s/\x02/\\u0002/g; s/\x03/\\u0003/g;
+    s/\x04/\\u0004/g; s/\x05/\\u0005/g; s/\x06/\\u0006/g; s/\x07/\\u0007/g;
+    s/\x08/\\b/g;     s/\x09/\\t/g;     s/\x0a/\\n/g;     s/\x0b/\\u000b/g;
+    s/\x0c/\\f/g;     s/\x0d/\\r/g;     s/\x0e/\\u000e/g; s/\x0f/\\u000f/g;
+    s/\x10/\\u0010/g; s/\x11/\\u0011/g; s/\x12/\\u0012/g; s/\x13/\\u0013/g;
+    s/\x14/\\u0014/g; s/\x15/\\u0015/g; s/\x16/\\u0016/g; s/\x17/\\u0017/g;
+    s/\x18/\\u0018/g; s/\x19/\\u0019/g; s/\x1a/\\u001a/g; s/\x1b/\\u001b/g;
+    s/\x1c/\\u001c/g; s/\x1d/\\u001d/g; s/\x1e/\\u001e/g; s/\x1f/\\u001f/g;
+    s/\x7f/\\u007f/g;
+    # format the JSON property name, optionally indented, open quote for value.
+    s/^(\s*)([^:]+):\\n/\1"\2": "/g;
+    # handle the final comma if present, and close the quote for value.
+    /,$/ { s/,$/",/g; }
+    # otherwise remove final space placeholder and close the quote for value.
+    /,$/ ! { s/ $/"/g; }
+}
+# print lines.
+p'
+}
+
+function jsonOutput() {
+    output=$(echo "JSON-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').json" | tr " :" "-" | tr -s "_-")
+    local propTag="__JSONPROP${RANDOM}__"
+    git -c log.showSignature=false log  ${_branch} --use-mailmap "${_author}" $_merges "$_since" "$_until" $_log_options \
+        --pretty=format:'{%n  "commit": "%H",%n  "abbreviated_commit": "%h",%n  "tree": "%T",%n'\
+'  "abbreviated_tree": "%t",%n  "parent": "%P",%n  "abbreviated_parent": "%p",%n  "refs": "%D",%n  "encoding": "%e",%n'\
+"$propTag"'  subject%n%s%n'"$propTag"',%n  "sanitized_subject_line": "%f",%n'\
+"$propTag"'  body%n%b%n'"$propTag"',%n'\
+"$propTag"'  commit_notes%n%N%n'"$propTag"',%n  "author": {%n'\
+"$propTag"'    name%n%aN%n'"$propTag"',%n'\
+"$propTag"'    email%n%aE%n'"$propTag"',%n'\
+'    "date": "%aD"%n  },%n  "commiter": {%n'\
+"$propTag"'    name%n%cN%n'"$propTag"',%n'\
+"$propTag"'    email%n%cE%n'"$propTag"',%n'\
+'    "date": "%cD"%n  }%n},' \
+        | toJsonProp "$propTag" \
+        | sed "$ s/,$//" \
+        | sed ':a;N;$!ba;s/\r\n\([^{]\)/\\n\1/g' \
+        | awk 'BEGIN { print("[") } { print($0) } END { print("]") }' \
+        > "${_output_dir}/${output}"
+        cat "${_output_dir}/${output}"
+}
+
+function branchTree() {
+  output=$(echo "Branching-tree-view_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+  if [[ "${_author}" == "--author=**" ]]; then
+    optionPicked "Branching tree view:"
+  else
+    optionPicked "Branching tree view '$(echo ${_author} | cut -d= -f2)':";
+  fi
+  optionPicked "This may take a while..."
+    # TODO: Can we shorten this pretty format line? Quick experiment shows that
+    #       it does not properly respect \ and interprets them literally.
+    git -c log.showSignature=false log --use-mailmap --graph --abbrev-commit \
+        "${_author}" "$_since" "$_until" --decorate \
+        --format=format:'--+ Commit:  %h %n  | Date:    %aD (%ar) %n''  | Message: %s %d %n''  + Author:  %aN %n' \
+        --all $_log_options | head -n $((_limit*5)) > "${_output_dir}/${output}"
+        cat "${_output_dir}/${output}"
+}
+
+function branchesByDate() {
+    optionPicked "All branches (sorted by most recent commit):"
+    git for-each-ref --sort=committerdate refs/heads/ \
+        --format='[%(authordate:relative)] %(authorname) %(refname:short)' | cat -n
+}
+
+function contributors() {
+    optionPicked "All contributors (sorted by name):"
+    git -c log.showSignature=false log  ${_branch} --use-mailmap "${_author}" $_merges "$_since" "$_until" \
+        --format='%aN' $_log_options $_pathspec | sort -u | cat -n
+}
+
+function commitsPerAuthor()  {
+    optionPicked "Git commits per author:"
+    local authorCommits=$(git -c log.showSignature=false log  ${_branch} --use-mailmap \
+                          $_merges "${_author}" "$_since" "$_until" $_log_options \
+                          | grep -i Author: | cut -c9- | sed 's/^\(Author:\|or:\) //ig')
+    local coAuthorCommits=$(git -c log.showSignature=false log  ${_branch} --use-mailmap \
+                          $_merges "${_author}" "$_since" "$_until" $_log_options \
+                          | grep -i Co-Authored-by: | cut -c21-)
+    if [[ -z "${coAuthorCommits}" ]]; then
+        allCommits="${authorCommits}"
+    else
+        allCommits="${authorCommits}\n${coAuthorCommits}"
+    fi
+    echo -e "${allCommits}" | awk '
+      { $NF=""; author[NR] = $0 }
+      END {
+        for(i in author) {
+          sum[author[i]]++; name[author[i]] = author[i]; total++;
+        }
+        for(i in sum) {
+          printf "\t%d:%s:%2.1f%%\n", sum[i], name[i], (100 * sum[i] / total)
+        }
+      }' | sort -n -r | column -t -s:
+}
+
+function commitsPerDay() {
+  if [[ "${_author}" == "--author=**" ]]; then
+    optionPicked "Git commits per date:";
+  else
+    optionPicked "Git commits per date for author '$(echo ${_author} | cut -d= -f2)':";
+  fi
+  git -c log.showSignature=false log ${_branch}  --use-mailmap "${_author}" $_merges "$_since" "$_until" \
+      --date=short --format='%ad' $_log_options $_pathspec | sort | uniq -c
+}
+
+function commitsByYear() {
+  if [[ "${_author}" == "--author=**" ]]; then
+    optionPicked "Git commits by year:"
+  else
+    optionPicked "Git commits by year for author '$(echo ${_author} | cut -d= -f2)':"
+  fi
+  local year startYear endYear __since __until
+  startYear=$(echo "$_since" | sed -E 's/^.*[^\+]([0-9]{4})(.*)?$/\1/')
+  endYear=$(echo "$_until" | sed -E 's/^.*([0-9]{4})(.*)?$/\1/')
+  echo -e "\tyear\tsum"
+  for year in $(seq "$startYear" "$endYear")
+  do
+    if [ "$year" = "$startYear" ]
+    then
+      __since=$_since
+      __until="--until=$year-12-31"
+    elif [ "$year" = "$endYear" ]
+    then
+      __since="--since=$year-01-01"
+      __until=$_until
+    else
+      __since="--since=$year-01-01"
+      __until="--until=$year-12-31"
+    fi
+    echo -en "\t$year\t"
+    git -c log.showSignature=false shortlog -n  ${_branch} "${_author}" $_merges --format='%ad %s' \
+        "$__since" "$__until" $_log_options | grep -cE \
+          " \w\w\w [0-9]{1,2} [0-9][0-9]:[0-9][0-9]:[0-9][0-9] $year " \
+            || continue
+  done | awk '{
+    count[$1] = $2
+    total += $2
+  }
+  END{
+    for (year in count) {
+      s="|";
+      if (total > 0) {
+        percent = ((count[year] / total) * 100) / 1.25;
+        for (i = 1; i <= percent; ++i) {
+          s=s"█"
+        }
+        printf( "\t%s\t%-0s\t%s\n", year, count[year], s );
+      }
+    }
+  }' | sort
+}
+
+function commitsByMonth() {
+    if [[ "${_author}" == "--author=**" ]]; then
+      optionPicked "Git commits by month:"
+    else
+      optionPicked "Git commits by month for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    echo -e "\tmonth\tsum"
+    local i
+    for i in Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec
+    do
+        echo -en "\t$i\t"
+        git -c log.showSignature=false shortlog -n  ${_branch} "${_author}" $_merges --format='%ad %s' \
+            "$_since" "$_until" $_log_options |
+            grep -cE " \w\w\w $i [0-9]{1,2} " || continue
+    done | awk '{
+        count[$1] = $2
+        total += $2
+    }
+    END{
+        for (month in count) {
+            s="|";
+            if (total > 0) {
+                percent = ((count[month] / total) * 100) / 1.25;
+                for (i = 1; i <= percent; ++i) {
+                    s=s"█"
+                }
+                printf( "\t%s\t%-0s\t%s\n", month, count[month], s );
+            }
+        }
+    }' | LC_TIME="en_EN.UTF-8" sort -M
+}
+
+function commitsByWeekday() {
+    if [[ "${_author}" == "--author=**" ]]; then
+      optionPicked "Git commits by weekday:"
+    else
+      optionPicked "Git commits by weekday for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    echo -e "\tday\tsum"
+    local i counter=1
+    for i in Mon Tue Wed Thu Fri Sat Sun
+    do
+        echo -en "\t$counter\t$i\t"
+        git -c log.showSignature=false shortlog -n  ${_branch} $_merges --format='%ad %s' \
+            "${_author}" "$_since" "$_until" $_log_options |
+            grep -cE "^ * $i \w\w\w [0-9]{1,2} " || continue
+        counter=$((counter+1))
+    done | awk '{
+    }
+    NR == FNR {
+        count[$1" "$2] = $3;
+        total += $3;
+        next
+    }
+    END{
+        for (day in count) {
+            s="|";
+            if (total > 0) {
+                percent = ((count[day] / total) * 100) / 1.25;
+                for (i = 1; i <= percent; ++i) {
+                    s=s"█"
+                }
+                printf("\t%s\t%s\t%-0s\t%s\n", substr(day,0,1), substr(day,3,5), count[day], s);
+            }
+        }
+    }' | sort -k 1 -n | awk '{$1=""}1' | awk '{$1=$1}1' \
+       | awk '{printf("\t%s\t%s\t%s\n", $1, $2, $3)}'
+}
+
+function commitsByHour() {
+    if [[ "${_author}" == "--author=**" ]]; then
+        optionPicked "Git commits by hour:"
+    else
+        optionPicked "Git commits by hour for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    echo -e "\thour\tsum"
+    local i
+    for i in $(seq -w 0 23)
+    do
+        echo -ne "\t$i\t"
+        git -c log.showSignature=false shortlog -n  ${_branch} $_merges --format='%ad %s' \
+            "${_author}" "$_since" "$_until" $_log_options |
+            grep -cE '[0-9] '$i':[0-9]' || continue
+    done | awk '{
+        count[$1] = $2
+        total += $2
+    }
+    END{
+        for (hour in count) {
+            s="|";
+            if (total > 0) {
+                percent = ((count[hour] / total) * 100) / 1.25;
+                for (i = 1; i <= percent; ++i) {
+                    s=s"█"
+                }
+                printf( "\t%s\t%-0s\t%s\n", hour, count[hour], s );
+            }
+        }
+    }' | sort
+}
+
+function commitsByTimezone() {
+    if [[ "${_author}" == "--author=**" ]]; then
+        optionPicked "Git commits by timezone:"
+    else
+        optionPicked "Git commits by timezone for author '$(echo ${_author} | cut -d= -f2)':"
+    fi
+    echo -e "Commits\tTimeZone"
+    git -c log.showSignature=false shortlog -n  ${_branch} $_merges --format='%ad %s' \
+        "${_author}" "$_since" "$_until" --date=iso $_log_options $_pathspec \
+        | cut -d " " -f 12 | grep -v -e '^[[:space:]]*$' | sort | uniq -c
+}
+
+function suggestReviewers() {
+    optionPicked "Suggested code reviewers (based on git history):"
+    git -c log.showSignature=false log  ${_branch} --use-mailmap $_merges "$_since" "$_until" \
+        --pretty=%aN $_log_options $_pathspec | head -n 100 | sort | uniq -c \
+        | sort -nr | LC_ALL=C awk '
+    { args[NR] = $0; }
+    END {
+      for (i = 1; i <= NR; ++i) {
+        printf "%s\n", args[i]
+      }
+    }' | column -t -s,
+}
+
+checkUtils
+git rev-parse --is-inside-work-tree > /dev/null
+git rev-parse --show-toplevel
+git log --pretty="%aN <%aE>" > $(dirname $(realpath "$0"))/.mailmap
+mkdir -p "${_output_dir}"
+
+if [[ "$#" -eq 1 ]]; then
+    case "$1" in
+        -T|--detailed-git-stats) detailedGitStats;;
+        -c|--changelogs) changelogs;;
+        -V|--csv-output) csvOutput;;
+        -j|--json-output) jsonOutput;;
+        -b|--branch-tree) branchTree;;
+        -D|--branches-by-date) branchesByDate;;
+        -C|--contributors) contributors;;
+        -a|--commits-per-author) commitsPerAuthor;;
+        -d|--commits-per-day) commitsPerDay;;
+        -Y|--commits-by-year ) commitsByYear;;
+        -m|--commits-by-month) commitsByMonth;;
+        -w|--commits-by-weekday) commitsByWeekday;;
+        -o|--commits-by-hour) commitsByHour;;
+        -z|--commits-by-timezone) commitsByTimezone;;
+        -r|--suggest-reviewers) suggestReviewers;;
+        -h|-\?|--help) usage;;
+        *) echo "Invalid argument"; usage; exit 1;;
+    esac
+    exit 0;
+fi
+[[ "$#" -gt 1 ]] && { echo "Invalid arguments"; usage; exit 1; }
+
+clear
+showMenu 1
+
+while [[ "${opt}" != "" ]]; do
+    clear
+    case "${opt}" in
+        1) detailedGitStats; showMenu;;
+        2) changelogs; showMenu;;
+        3) guidesChangelogs; showMenu;;
+        4) csvOutput; showMenu;;
+        5) jsonOutput; showMenu;;
+        6) branchTree; showMenu;;
+        7) branchesByDate; showMenu;;
+        8) contributors; showMenu;;
+        9) commitsPerAuthor; showMenu;;
+       10) commitsPerDay; showMenu;;
+       11) commitsByMonth; showMenu;;
+       12) commitsByYear; showMenu;;
+       13) commitsByWeekday; showMenu;;
+       14) commitsByHour; showMenu;;
+       15) commitsByTimezone; showMenu;;
+       16) suggestReviewers; showMenu;;
+       17) setOptions;;
+       18) showOptions; showMenu;;
+       [Ss]ince:*) unset _GIT_SINCE && export _GIT_SINCE=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       [Uu]ntil:*) unset _GIT_UNTIL && export _GIT_UNTIL=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       [Mm]erge[Vv]iew:*) unset _GIT_MERGE_VIEW && export _GIT_MERGE_VIEW=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       [Bb]ranch:*) unset _GIT_BRANCH && export _GIT_BRANCH=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       [Aa]uthor:*) unset _GIT_AUTHOR && export _GIT_AUTHOR=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       [Oo]utput:*) unset _GIT_OUTPUT_DIR && export _GIT_OUTPUT_DIR=$(echo _${opt} | cut -d: -f2); exec "$0";;
+       q|"\n") exit;;
+       *) clear; optionPicked "Pick an option from the menu"; showMenu;;
+    esac
+done
