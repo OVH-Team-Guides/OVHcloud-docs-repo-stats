@@ -9,7 +9,7 @@ else
     _since="--since=$(git log --date=iso --reverse --format='%ad' | head -n1 | cut -d' ' -f -2)"
 fi
 if [[ "$(uname -s)" == "Darwin" ]];then
-  _since="--since=$(date -j -f "%Y-%m-%d" "$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+  _since="--since=$(date -j -f "%Y-%m-%d" "$(echo ${_since} | grep -Eo '[0-9]{4}(-[0-9]{2}){2}')" +'%Y-%m-%d %H:%M:%S')"
 elif [[ "$(uname -s)" == "Linux" ]];then
   _since="--since=$(date --date="$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
 fi
@@ -21,7 +21,7 @@ else
     _until="--until=$(date +'%Y-%m-%d %H:%M:%S')"
 fi
 if [[ "$(uname -s)" == "Darwin" ]];then
-  _until="--until=$(date -j -f "%Y-%m-%d" "$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+  _until="--until=$(date -j -f "%Y-%m-%d" "$(echo ${_until} | grep -Eo '[0-9]{4}(-[0-9]{2}){2}')" +'%Y-%m-%d %H:%M:%S')"
 elif [[ "$(uname -s)" == "Linux" ]];then
   _until="--until=$(date --date="$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
 fi
@@ -86,9 +86,9 @@ _output_dir=${_GIT_OUTPUT_DIR:-}
 if [[ -n "${_output_dir}" ]]; then
     _output_dir="$(readlink -f ${_output_dir})"
 else
-    _output_dir="$(dirname $(readlink -f ${0}))/output"
+    _output_dir="$(dirname ${0})/output"
 fi
-
+_output_dir="/Users/ycosse/Desktop/docstools/output"
 _theme="${_MENU_THEME:=default}"
 
 function checkUtils() {
@@ -883,8 +883,8 @@ function suggestReviewers() {
 
 checkUtils
 git rev-parse --is-inside-work-tree > /dev/null
-cd $(git rev-parse --show-toplevel)
-git log --pretty="%aN <%aE>" > $(dirname $(readlink -f "$0"))/.mailmap
+cd "$(git rev-parse --show-toplevel)"
+git log --pretty="%aN <%aE>" > ''../../docstools/.mailmap''
 mkdir -p "${_output_dir}"
 
 if [[ "$#" -eq 1 ]]; then
