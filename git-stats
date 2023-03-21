@@ -43,6 +43,12 @@ else
     _merges="--no-merges"
 fi
 
+case "${_merges}" in
+  --no-merges) mergeview="commits";;
+  --merges) mergeview="merges";;
+  *) mergeview="merges and commits";;
+esac
+
 _limit=${_GIT_LIMIT:-}
 if [[ -n "${_limit}" ]]; then
     _limit=$_limit
@@ -275,8 +281,8 @@ function showMenu() {
 
 function detailedGitStats() {
   local output=""
-  optionPicked "Contribution stats (by author) on ${_branch} branch:"
-  output=$(echo "Contribution-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+  optionPicked "Contribution ${mergeview} stats (by author) on ${_branch} branch:"
+  output=$(echo "Contribution-${mergeview}-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
   optionPicked "This may take a while..."
   git -c log.showSignature=false log ${_branch} --use-mailmap $_merges --numstat \
       --pretty="format:commit %H%nAuthor: %aN <%aE>%nDate:   %ad%n%n%w(0,4,4)%B%n" \
@@ -356,18 +362,18 @@ function detailedGitStats() {
 
 function changelogs() {
   local output=""
-  local merges
-  case "${_merges}" in
-    --no-merges) merges="commits";;
-    --merges) merges="merges";;
-    *) merges="merges and commits";;
-  esac
+#  local merges
+#  case "${_merges}" in
+#    --no-merges) merges="commits";;
+#    --merges) merges="merges";;
+#    *) merges="merges and commits";;
+#  esac
   if [[ "${_author}" == "--author=**" ]]; then
-    optionPicked "Git ${merges} changelogs:"
+    optionPicked "Git ${mergeview} changelogs:"
   else
-    optionPicked "Git ${merges} changelogs for author '$(echo ${_author} | cut -d= -f2)':"
+    optionPicked "Git ${mergeview} changelogs for author '$(echo ${_author} | cut -d= -f2)':"
   fi
-  output=$(echo "Git-${merges}-changelogs_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
+  output=$(echo "Git-${mergeview}-changelogs_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').log" | tr " :" "-" | tr -s "_-")
   optionPicked "This may take a while..."
   git -c log.showSignature=false log \
       ${_branch} \
@@ -502,7 +508,7 @@ function guidesChangelogs(){
 }
 
 function csvOutput() {
-    output=$(echo "CSV-daily-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').csv" | tr " :" "-" | tr -s "_-")
+    output=$(echo "CSV-${mergeview}-daily-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').csv" | tr " :" "-" | tr -s "_-")
     printf "author,insertions,insertions_per,deletions,deletions_per,files," > "${_output_dir}/$output"
     printf "files_per,commits,commits_per,lines_changed,lines_changed_per\n" >> "${_output_dir}/$output"
     git -c log.showSignature=false log ${_branch} --use-mailmap $_merges --numstat \
@@ -616,7 +622,7 @@ p'
 }
 
 function jsonOutput() {
-    output=$(echo "JSON-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').json" | tr " :" "-" | tr -s "_-")
+    output=$(echo "JSON-${mergeview}-stats_${_branch}_$(echo ${_since} | cut -d= -f2)_$(echo ${_until} | cut -d= -f2)_$(echo ${_author} | cut -d= -f2 | tr -d '*').json" | tr " :" "-" | tr -s "_-")
     local propTag="__JSONPROP${RANDOM}__"
     git -c log.showSignature=false log  ${_branch} --use-mailmap "${_author}" $_merges "$_since" "$_until" $_log_options \
         --pretty=format:'{%n  "commit": "%H",%n  "abbreviated_commit": "%h",%n  "tree": "%T",%n'\
@@ -662,13 +668,13 @@ function branchesByDate() {
 }
 
 function contributors() {
-    optionPicked "All contributors (sorted by name):"
+    optionPicked "All ${mergeview} contributors (sorted by name):"
     git -c log.showSignature=false log  ${_branch} --use-mailmap "${_author}" $_merges "$_since" "$_until" \
         --format='%aN' $_log_options $_pathspec | sort -u | cat -n
 }
 
 function commitsPerAuthor()  {
-    optionPicked "Git commits per author:"
+    optionPicked "Git ${mergeview} per author:"
     local authorCommits=$(git -c log.showSignature=false log  ${_branch} --use-mailmap \
                           $_merges "${_author}" "$_since" "$_until" $_log_options \
                           | grep -i Author: | cut -c9- | sed 's/^\(Author:\|or:\) //ig')
@@ -694,9 +700,9 @@ function commitsPerAuthor()  {
 
 function commitsPerDay() {
   if [[ "${_author}" == "--author=**" ]]; then
-    optionPicked "Git commits per date:";
+    optionPicked "Git ${mergeview} per date:";
   else
-    optionPicked "Git commits per date for author '$(echo ${_author} | cut -d= -f2)':";
+    optionPicked "Git ${mergeview} per date for author '$(echo ${_author} | cut -d= -f2)':";
   fi
   git -c log.showSignature=false log ${_branch}  --use-mailmap "${_author}" $_merges "$_since" "$_until" \
       --date=short --format='%ad' $_log_options $_pathspec | sort | uniq -c
@@ -704,9 +710,9 @@ function commitsPerDay() {
 
 function commitsByYear() {
   if [[ "${_author}" == "--author=**" ]]; then
-    optionPicked "Git commits by year:"
+    optionPicked "Git ${mergeview} by year:"
   else
-    optionPicked "Git commits by year for author '$(echo ${_author} | cut -d= -f2)':"
+    optionPicked "Git ${mergeview} by year for author '$(echo ${_author} | cut -d= -f2)':"
   fi
   local year startYear endYear __since __until
   startYear=$(echo "$_since" | sed -E 's/^.*[^\+]([0-9]{4})(.*)?$/\1/')
@@ -751,9 +757,9 @@ function commitsByYear() {
 
 function commitsByMonth() {
     if [[ "${_author}" == "--author=**" ]]; then
-      optionPicked "Git commits by month:"
+      optionPicked "Git ${mergeview} by month:"
     else
-      optionPicked "Git commits by month for author '$(echo ${_author} | cut -d= -f2)':"
+      optionPicked "Git ${mergeview} by month for author '$(echo ${_author} | cut -d= -f2)':"
     fi
     echo -e "\tmonth\tsum"
     local i
@@ -783,9 +789,9 @@ function commitsByMonth() {
 
 function commitsByWeekday() {
     if [[ "${_author}" == "--author=**" ]]; then
-      optionPicked "Git commits by weekday:"
+      optionPicked "Git ${mergeview} by weekday:"
     else
-      optionPicked "Git commits by weekday for author '$(echo ${_author} | cut -d= -f2)':"
+      optionPicked "Git ${mergeview} by weekday for author '$(echo ${_author} | cut -d= -f2)':"
     fi
     echo -e "\tday\tsum"
     local i counter=1
@@ -820,9 +826,9 @@ function commitsByWeekday() {
 
 function commitsByHour() {
     if [[ "${_author}" == "--author=**" ]]; then
-        optionPicked "Git commits by hour:"
+        optionPicked "Git ${mergeview} by hour:"
     else
-        optionPicked "Git commits by hour for author '$(echo ${_author} | cut -d= -f2)':"
+        optionPicked "Git ${mergeview} by hour for author '$(echo ${_author} | cut -d= -f2)':"
     fi
     echo -e "\thour\tsum"
     local i
@@ -852,9 +858,9 @@ function commitsByHour() {
 
 function commitsByTimezone() {
     if [[ "${_author}" == "--author=**" ]]; then
-        optionPicked "Git commits by timezone:"
+        optionPicked "Git ${mergeview} by timezone:"
     else
-        optionPicked "Git commits by timezone for author '$(echo ${_author} | cut -d= -f2)':"
+        optionPicked "Git ${mergeview} by timezone for author '$(echo ${_author} | cut -d= -f2)':"
     fi
     echo -e "Commits\tTimeZone"
     git -c log.showSignature=false shortlog -n  ${_branch} $_merges --format='%ad %s' \
