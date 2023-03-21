@@ -2,8 +2,6 @@
 set -o nounset
 set -o errexit
 
-DEFAULT_GIT_LIMIT=$(git log | grep -E "^commit " | wc -l)
-
 _since=${_GIT_SINCE:-}
 if [[ -n "${_since}" ]]; then
     _since="--since=$_since"
@@ -49,7 +47,7 @@ _limit=${_GIT_LIMIT:-}
 if [[ -n "${_limit}" ]]; then
     _limit=$_limit
 else
-    _limit=${DEFAULT_GIT_LIMIT}
+    _limit=$(git log | grep -E "^commit " | wc -l)
 fi
 
 _log_options=${_GIT_LOG_OPTIONS:-}
