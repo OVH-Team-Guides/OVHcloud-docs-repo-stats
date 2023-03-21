@@ -10,7 +10,11 @@ if [[ -n "${_since}" ]]; then
 else
     _since="--since=$(git log --date=iso --reverse --format='%ad' | head -n1 | cut -d' ' -f -2)"
 fi
-_since="--since=$(date -j -f "%Y-%m-%d" "$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+if [[ "$(uname -s)" == "Darwin" ]];then
+  _since="--since=$(date -j -f "%Y-%m-%d" "$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+elif [[ "$(uname -s)" == "Linux" ]];then
+  _since="--since=$(date --date="$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+fi
 
 _until=${_GIT_UNTIL:-}
 if [[ -n "${_until}" ]]; then
@@ -18,7 +22,11 @@ if [[ -n "${_until}" ]]; then
 else
     _until="--until=$(date +'%Y-%m-%d %H:%M:%S')"
 fi
-_until="--until=$(date -j -f "%Y-%m-%d" "$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+if [[ "$(uname -s)" == "Darwin" ]];then
+  _until="--until=$(date -j -f "%Y-%m-%d" "$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+elif [[ "$(uname -s)" == "Linux" ]];then
+  _until="--until=$(date --date="$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+fi
 
 _pathspec=${_GIT_PATHSPEC:-}
 if [[ -n "${_pathspec}" ]]; then
