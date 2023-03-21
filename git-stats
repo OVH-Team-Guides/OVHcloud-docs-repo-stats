@@ -10,7 +10,7 @@ if [[ -n "${_since}" ]]; then
 else
     _since="--since=$(git log --date=iso --reverse --format='%ad' | head -n1 | cut -d' ' -f -2)"
 fi
-_since="--since=$(date --date="$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+_since="--since=$(date -j -f "%Y-%m-%d" "$(echo ${_since} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
 
 _until=${_GIT_UNTIL:-}
 if [[ -n "${_until}" ]]; then
@@ -18,7 +18,7 @@ if [[ -n "${_until}" ]]; then
 else
     _until="--until=$(date +'%Y-%m-%d %H:%M:%S')"
 fi
-_until="--until=$(date --date="$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
+_until="--until=$(date -j -f "%Y-%m-%d" "$(echo ${_until} | cut -d= -f2)" +'%Y-%m-%d %H:%M:%S')"
 
 _pathspec=${_GIT_PATHSPEC:-}
 if [[ -n "${_pathspec}" ]]; then
@@ -72,9 +72,9 @@ fi
 
 _output_dir=${_GIT_OUTPUT_DIR:-}
 if [[ -n "${_output_dir}" ]]; then
-    _output_dir="$(realpath ${_output_dir})"
+    _output_dir="$(readlink -f ${_output_dir})"
 else
-    _output_dir="$(dirname $(realpath ${0}))/output"
+    _output_dir="$(dirname $(readlink -f ${0}))/output"
 fi
 
 _theme="${_MENU_THEME:=default}"
@@ -200,8 +200,8 @@ function setOptions(){
 
 function showOptions(){
   printf %b "\\n${TITLES} Current option values:${NORMAL}\\n\\n"
-  printf %b "${NUMS}    Since:\\t${TEXT} $(echo $_since | cut -d= -f2)\\n"
-  printf %b "${NUMS}    Until:\\t${TEXT} $(echo $_until | cut -d= -f2)\\n"
+  printf %b "${NUMS}    Since:\\t${TEXT} $(echo $_since | grep -Eo "[0-9]{4}(-[0-9]{2}){2}")\\n"
+  printf %b "${NUMS}    Until:\\t${TEXT} $(echo $_until | grep -Eo "[0-9]{4}(-[0-9]{2}){2}")\\n"
   printf %b "${NUMS}    Merge view:\\t${TEXT} $_merges\\n"
   printf %b "${NUMS}    Branch:\\t${TEXT} $_branch\\n"
   printf %b "${NUMS}    Author:\\t${TEXT} $(echo $_author | cut -d= -f2 | tr -d "\*")\\n"
@@ -350,7 +350,6 @@ function detailedGitStats() {
 
 function changelogs() {
   local output=""
-  local next=$(date +%F)
   local merges
   case "${_merges}" in
     --no-merges) merges="commits";;
@@ -376,16 +375,14 @@ function changelogs() {
           GIT_PAGER=cat git -c log.showSignature=false log \
                             --use-mailmap  ${_branch} $_merges \
                             --format=" * %aN;%s" "${_author}" \
-                            --since="$DATE 00:00:00" --until="$next 23:59:59" \
+                            --since="$DATE 00:00:00" --until="$DATE 23:59:59" \
                             | sort -u
-          next=$DATE
         done | column -t -s\; > "${_output_dir}/$output"
         cat "${_output_dir}/$output"
 }
 
 function guidesChangelogs(){
   local output=""
-  local next=$(date +%F)
   local title=''
   if [[ "${_merges}" == "--merges" ]];then
     if [[ "${_author}" == "--author=**" ]]; then
@@ -412,7 +409,7 @@ function guidesChangelogs(){
                             --merges \
                             --format="%p (%aN)" \
                             --since="$DATE 00:00:00" \
-                            --until="$next 23:59:59" \
+                            --until="$DATE 23:59:59" \
                             "${_author}" \
                             | while read hash parent author;
                             do
@@ -420,7 +417,7 @@ function guidesChangelogs(){
                                   --name-only \
                                   --pretty="format:" \
                                   --since="$DATE 00:00:00" \
-                                  --until="$next 23:59:59" ${parent}) 2>/dev/null | sort -u | while read g; \
+                                  --until="$DATE 23:59:59" ${parent}) 2>/dev/null | grep -vE "images$|meta\.yaml$|index\.md$" | sort -u | while read g; \
                                   do
                                     if [[ -f $g/guide.en-gb.md ]];then
                                       title=$(awk -F ": " '/^title: / {print $2}' $g/guide.en-gb.md);
@@ -440,7 +437,7 @@ function guidesChangelogs(){
                                     fi;
                                   done | sort -u;
                             done | sort -u;
-                            next=$DATE;
+                            #next=$DATE;
                           done | column -t -s: > "${_output_dir}/$output"
   elif [[ "${_merges}" == "--no-merges" ]];then
     if [[ "${_author}" == "--author=**" ]]; then
@@ -467,13 +464,13 @@ function guidesChangelogs(){
                             --no-merges \
                             --format="%h (%aN)" \
                             --since="$DATE 00:00:00" \
-                            --until="$next 23:59:59" \
+                            --until="$DATE 23:59:59" \
                             "${_author}" \
                         | while read ha;
                         do
                           hash=$(echo $ha | cut -d' ' -f1);
                           author=$(echo $ha | awk -F "[()]" '{print $2}');
-                          dirname $(git diff-tree --name-only --no-commit-id -r -c ${hash}) 2>/dev/null | sort -u \
+                          dirname $(git diff-tree --name-only --no-commit-id -r -c ${hash}) 2>/dev/null | grep -vE "images$|meta\.yaml$|index\.md$" | sort -u \
                           | while read g;
                           do
                             if [[ -f $g/guide.en-gb.md ]];then
@@ -493,7 +490,6 @@ function guidesChangelogs(){
                             fi;
                           done;
                         done | sort -u;
-                        next=$DATE;
                       done | column -t -s: > "${_output_dir}/$output"
   fi
   cat "${_output_dir}/$output" | sed "s/ — New/${YELLOW}  — New${NORMAL}/g"
@@ -875,8 +871,8 @@ function suggestReviewers() {
 
 checkUtils
 git rev-parse --is-inside-work-tree > /dev/null
-git rev-parse --show-toplevel
-git log --pretty="%aN <%aE>" > $(dirname $(realpath "$0"))/.mailmap
+cd $(git rev-parse --show-toplevel)
+git log --pretty="%aN <%aE>" > $(dirname $(readlink -f "$0"))/.mailmap
 mkdir -p "${_output_dir}"
 
 if [[ "$#" -eq 1 ]]; then
